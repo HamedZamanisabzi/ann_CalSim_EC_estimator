@@ -110,7 +110,7 @@ def calculate_metrics(model_name, y_train, y_train_pred, y_test, y_test_pred):
     y_train_np = y_train.values.ravel()
     y_train_pred_np = y_train_pred.ravel()
 
-    # Calculate metrics for training data
+    # Calculate metrics for training data #(The calculating metric portion of the code is the same as our previous project, which code was drafted by Peyman Namadihttp://dwrrhapp0179.ad.water.ca.gov/gitea/peymanhn/CalSimDeltaOutFlowEstimator_CDOE)   
     r2_train = r2_score(y_train_np, y_train_pred_np)
     rmse_train = np.sqrt(mean_squared_error(y_train_np, y_train_pred_np))
     percentage_bias_train = np.mean((y_train_pred_np - y_train_np) / y_train_np) * 100
@@ -135,7 +135,7 @@ def calculate_metrics(model_name, y_train, y_train_pred, y_test, y_test_pred):
     }
 
 def plot_history(history):
-    plt.figure(figsize=(10, 5))
+    plt.figure(figsize=(12, 6))
     plt.plot(history.history['loss'], label='Training Loss')
     plt.plot(history.history['val_loss'], label='Validation Loss')
     plt.title('Training and Validation Loss Over Epochs')
