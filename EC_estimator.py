@@ -9,25 +9,14 @@ from sklearn.metrics import r2_score, mean_squared_error
 import matplotlib.pyplot as plt
 import os
 
-num_features = [
-    'sac', 'exports', 'dcc', 'net_dcd', 'sjr', 'tide', 'smscg', 'sac_1d', 'exports_1d', 'dcc_1d', 
-    'net_dcd_1d', 'sjr_1d', 'tide_1d', 'smscg_1d', 'sac_2d', 'exports_2d', 'dcc_2d', 'net_dcd_2d', 
-    'sjr_2d', 'tide_2d', 'smscg_2d', 'sac_3d', 'exports_3d', 'dcc_3d', 'net_dcd_3d', 'sjr_3d', 'tide_3d', 
-    'smscg_3d', 'sac_4d', 'exports_4d', 'dcc_4d', 'net_dcd_4d', 'sjr_4d', 'tide_4d', 'smscg_4d', 'sac_5d', 
-    'exports_5d', 'dcc_5d', 'net_dcd_5d', 'sjr_5d', 'tide_5d', 'smscg_5d', 'sac_6d', 'exports_6d', 'dcc_6d', 
-    'net_dcd_6d', 'sjr_6d', 'tide_6d', 'smscg_6d', 'sac_7d', 'exports_7d', 'dcc_7d', 'net_dcd_7d', 'sjr_7d', 
-    'tide_7d', 'smscg_7d', 'sac_1ave', 'exports_1ave', 'dcc_1ave', 'net_dcd_1ave', 'sjr_1ave', 'tide_1ave', 
-    'smscg_1ave', 'sac_2ave', 'exports_2ave', 'dcc_2ave', 'net_dcd_2ave', 'sjr_2ave', 'tide_2ave', 'smscg_2ave', 
-    'sac_3ave', 'exports_3ave', 'dcc_3ave', 'net_dcd_3ave', 'sjr_3ave', 'tide_3ave', 'smscg_3ave', 'sac_4ave', 
-    'exports_4ave', 'dcc_4ave', 'net_dcd_4ave', 'sjr_4ave', 'tide_4ave', 'smscg_4ave', 'sac_5ave', 'exports_5ave', 
-    'dcc_5ave', 'net_dcd_5ave', 'sjr_5ave', 'tide_5ave', 'smscg_5ave', 'sac_6ave', 'exports_6ave', 'dcc_6ave', 
-    'net_dcd_6ave', 'sjr_6ave', 'tide_6ave', 'smscg_6ave', 'sac_7ave', 'exports_7ave', 'dcc_7ave', 'net_dcd_7ave', 
-    'sjr_7ave', 'tide_7ave', 'smscg_7ave', 'sac_8ave', 'exports_8ave', 'dcc_8ave', 'net_dcd_8ave', 'sjr_8ave', 
-    'tide_8ave', 'smscg_8ave', 'sac_9ave', 'exports_9ave', 'dcc_9ave', 'net_dcd_9ave', 'sjr_9ave', 'tide_9ave', 
-    'smscg_9ave', 'sac_10ave', 'exports_10ave', 'dcc_10ave', 'net_dcd_10ave', 'sjr_10ave', 'tide_10ave', 'smscg_10ave'
-]
+
+num_feature_dims = {"sac" : 18, "exports" : 18, "dcc": 18, "net_dcd" : 18, "sjr": 18, "tide" : 18, "smscg" : 18}
 
 root_logdir = os.path.join(os.curdir, "tf_training_logs")
+
+
+def feature_names():
+    return list(num_feature_dims.keys())
 
 def root_mean_squared_error(y_true, y_pred):
     y_true = tf.cast(y_true, tf.float32)
@@ -41,14 +30,49 @@ def split_data(df, train_rows, test_rows):
     df_test = df.head(test_rows)
     return df_train, df_test
 
-def build_model_inputs(df):
+def build_model_inputs_orig(df):
     inputs = []
     for feature in num_features:
         feature_input = Input(shape=(1,), name=f"{feature}_input")
         inputs.append(feature_input)
     return inputs
 
-def preprocessing_layers(df, inputs):
+def build_model_inputs(df):
+    inputs = []
+    for feature,fdim in feature_names():
+        feature_input = Input(shape=(fdim,), name=f"{feature}_input")
+        inputs.append(feature_input)
+    return inputs
+
+def df_by_variable(df):
+    indextups = []
+    for col in list(df.columns):
+        var = col
+        lag = ""
+        for key in num_feature_dims.keys():
+            if col.startswith(key):
+                var = key
+                lag = col.replace(key,"").replace("_","")
+                if lag is None or lag == "": lag = "0d"
+                continue
+        if var == "EC": lag = "0d"
+        indextups.append((var,lag))
+ 
+    ndx = pd.MultiIndex.from_tuples(indextups, names=('var', 'lag'))
+    df.columns = ndx
+    return df
+
+def preprocessing_layers(df_var, inputs):
+    layers = []
+    for fndx,feature in enumerate(feature_names()):
+        station_df = df_var.loc[:, pd.IndexSlice[feature,:]]
+        feature_layer = Normalization()
+        feature_layer.adapt(station_df.values.reshape(-1, num_feature_dims[feature]))  
+        layers.append(feature_layer(inputs[fndx]))
+    return layers
+
+
+def preprocessing_layers1(df, inputs):
     layers = []
     for feature in num_features:
         feature_layer = Normalization()
@@ -57,37 +81,68 @@ def preprocessing_layers(df, inputs):
     return layers
 
 
-def build_model(layers, inputs):  
-    concatenated = tf.keras.layers.concatenate(layers)
+def build_model1(layers, inputs):  
+
     tensorboard_cb = tf.keras.callbacks.TensorBoard(log_dir=root_logdir)
-    
-    ann = tf.keras.models.Sequential()
+    x = tf.keras.layers.concatenate(layers)
+    #ann = tf.keras.models.Sequential(name="EC")
+    #ann.add(concatenated)
     
     # First hidden layer with 8 neurons and sigmoid activation function
-    ann.add(Dense(units=8, activation='sigmoid', input_dim=concatenated.shape[1], kernel_initializer="he_normal"))  
-    ann.add(tf.keras.layers.BatchNormalization())
+    x = Dense(units=8, activation='sigmoid', input_dim=concatenated.shape[1], kernel_initializer="he_normal")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
     
     # Second hidden layer with 2 neurons and sigmoid activation function
-    ann.add(Dense(units=2, activation='sigmoid', kernel_initializer="he_normal")) 
-    ann.add(tf.keras.layers.BatchNormalization())
+    x = Dense(units=2, activation='sigmoid', kernel_initializer="he_normal",name="hidden")(x) 
+    x = tf.keras.layers.BatchNormalization(,name="batch_normalize")(x)
     
     # Output layer with 1 neuron
-    ann.add(Dense(units=1))  
-    
+    output = Dense(units=1,name="emm_ec",activation="relu")(x)
+    ann = Model(inputs = inputs, outputs = {"output" : outputs})
+
     ann.compile(
         optimizer=tf.keras.optimizers.Adamax(learning_rate=0.001), 
         loss=root_mean_squared_error, 
         metrics=['mean_absolute_error']
     )
     
-    model = Model(inputs=inputs, outputs=ann(concatenated))
-    model.compile(
+    #model = Model(inputs=inputs, outputs={"emm_ec": ann(concatenated)})
+    #model = Model(inputs=inputs, outputs={"emm_ec": ann(concatenated)})
+    #model.compile(
+    #    optimizer=tf.keras.optimizers.Adamax(learning_rate=0.001), 
+    #    loss=root_mean_squared_error, 
+    #    metrics=['mean_absolute_error']
+    #)
+    
+    print(ann.summary())
+    return ann, tensorboard_cb
+
+
+def build_model(layers, inputs):  
+
+    tensorboard_cb = tf.keras.callbacks.TensorBoard(log_dir=root_logdir)
+    x = tf.keras.layers.concatenate(layers)
+    
+    # First hidden layer with 8 neurons and sigmoid activation function
+    x = Dense(units=8, activation='sigmoid', input_dim=concatenated.shape[1], kernel_initializer="he_normal")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    
+    # Second hidden layer with 2 neurons and sigmoid activation function
+    x = Dense(units=2, activation='sigmoid', kernel_initializer="he_normal",name="hidden")(x) 
+    x = tf.keras.layers.BatchNormalization(,name="batch_normalize")(x)
+    
+    # Output layer with 1 neuron
+    output = Dense(units=1,name="emm_ec",activation="relu")(x)
+    ann = Model(inputs = inputs, outputs = {"output" : output})
+
+    ann.compile(
         optimizer=tf.keras.optimizers.Adamax(learning_rate=0.001), 
         loss=root_mean_squared_error, 
         metrics=['mean_absolute_error']
     )
     
-    return model, tensorboard_cb
+    return ann, tensorboard_cb
+
 
 
 def train_model(model, tensorboard_cb, X_train, y_train, X_test, y_test):
@@ -106,6 +161,7 @@ def train_model(model, tensorboard_cb, X_train, y_train, X_test, y_test):
         verbose=0
     )
     return history, model
+
 def calculate_metrics(model_name, y_train, y_train_pred, y_test, y_test_pred):
     y_train_np = y_train.values.ravel()
     y_train_pred_np = y_train_pred.ravel()
