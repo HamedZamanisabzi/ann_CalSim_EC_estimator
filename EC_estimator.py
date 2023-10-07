@@ -10,7 +10,15 @@ import matplotlib.pyplot as plt
 import os
 
 
-num_feature_dims = {"sac" : 18, "exports" : 18, "dcc": 18, "net_dcd" : 18, "sjr": 18, "tide" : 18, "smscg" : 18}
+num_feature_dims = {"sac" : 18, 
+                    "exports" : 18, 
+                    "dcc": 18, 
+                    "net_dcd" : 18, 
+                    "sjr": 18, 
+                    "tide" : 18, 
+                    "smscg" : 18}
+
+lags_feature = None
 
 root_logdir = os.path.join(os.curdir, "tf_training_logs")
 
@@ -30,21 +38,34 @@ def split_data(df, train_rows, test_rows):
     df_test = df.head(test_rows)
     return df_train, df_test
 
-def build_model_inputs_orig(df):
-    inputs = []
-    for feature in num_features:
-        feature_input = Input(shape=(1,), name=f"{feature}_input")
-        inputs.append(feature_input)
-    return inputs
 
 def build_model_inputs(df):
     inputs = []
-    for feature,fdim in feature_names():
+    for feature,fdim in num_feature_dims.items():
         feature_input = Input(shape=(fdim,), name=f"{feature}_input")
         inputs.append(feature_input)
     return inputs
 
+def calc_lags_feature(df):
+    global lags_feature
+    lags_feature = {feature: df.loc[:, pd.IndexSlice[feature,:]].columns.get_level_values(level='lag')[0:num_feature_dims[feature]] 
+                    for feature in feature_names()}
+
 def df_by_variable(df):
+    """ Convert a dataset with a single index with var_lag as column names and convert to MultiIndex with (var,ndx)
+        This facilitates queries that select only lags or only variables. As a side effect this routine will store
+        the name of the active lags for each feature, corresponding to the number of lags in the dictionary num_feature_dims)
+        into the module variable lag_features.
+
+        Parameters
+        ----------
+        df : pd.DataFrame 
+            The DataFrame to be converted
+
+        Returns
+        -------
+        df_var : A DataFrame with multiIndex based on var,lag  (e.g. 'sac','4d')
+    """
     indextups = []
     for col in list(df.columns):
         var = col
@@ -60,80 +81,47 @@ def df_by_variable(df):
  
     ndx = pd.MultiIndex.from_tuples(indextups, names=('var', 'lag'))
     df.columns = ndx
+    calc_lags_feature(df)
     return df
 
 def preprocessing_layers(df_var, inputs):
     layers = []
     for fndx,feature in enumerate(feature_names()):
-        station_df = df_var.loc[:, pd.IndexSlice[feature,:]]
+
+        station_df = df_var.loc[:, pd.IndexSlice[feature,lags_feature[feature]]]
         feature_layer = Normalization()
         feature_layer.adapt(station_df.values.reshape(-1, num_feature_dims[feature]))  
         layers.append(feature_layer(inputs[fndx]))
     return layers
 
 
-def preprocessing_layers1(df, inputs):
-    layers = []
-    for feature in num_features:
-        feature_layer = Normalization()
-        feature_layer.adapt(df[feature].values.reshape(-1, 1))  
-        layers.append(feature_layer(inputs[num_features.index(feature)]))
-    return layers
 
 
-def build_model1(layers, inputs):  
 
-    tensorboard_cb = tf.keras.callbacks.TensorBoard(log_dir=root_logdir)
-    x = tf.keras.layers.concatenate(layers)
-    #ann = tf.keras.models.Sequential(name="EC")
-    #ann.add(concatenated)
-    
-    # First hidden layer with 8 neurons and sigmoid activation function
-    x = Dense(units=8, activation='sigmoid', input_dim=concatenated.shape[1], kernel_initializer="he_normal")(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    
-    # Second hidden layer with 2 neurons and sigmoid activation function
-    x = Dense(units=2, activation='sigmoid', kernel_initializer="he_normal",name="hidden")(x) 
-    x = tf.keras.layers.BatchNormalization(,name="batch_normalize")(x)
-    
-    # Output layer with 1 neuron
-    output = Dense(units=1,name="emm_ec",activation="relu")(x)
-    ann = Model(inputs = inputs, outputs = {"output" : outputs})
+def build_model(layers, inputs):
+    """ Builds the standard CalSIM ANN
+        Parameters
+        ----------
+        layers : list  
+        List of tf.Layers
 
-    ann.compile(
-        optimizer=tf.keras.optimizers.Adamax(learning_rate=0.001), 
-        loss=root_mean_squared_error, 
-        metrics=['mean_absolute_error']
-    )
-    
-    #model = Model(inputs=inputs, outputs={"emm_ec": ann(concatenated)})
-    #model = Model(inputs=inputs, outputs={"emm_ec": ann(concatenated)})
-    #model.compile(
-    #    optimizer=tf.keras.optimizers.Adamax(learning_rate=0.001), 
-    #    loss=root_mean_squared_error, 
-    #    metrics=['mean_absolute_error']
-    #)
-    
-    print(ann.summary())
-    return ann, tensorboard_cb
-
-
-def build_model(layers, inputs):  
+        inputs: dataframe
+    """        
 
     tensorboard_cb = tf.keras.callbacks.TensorBoard(log_dir=root_logdir)
     x = tf.keras.layers.concatenate(layers)
     
     # First hidden layer with 8 neurons and sigmoid activation function
-    x = Dense(units=8, activation='sigmoid', input_dim=concatenated.shape[1], kernel_initializer="he_normal")(x)
+    x = Dense(units=8, activation='sigmoid', input_dim=x.shape[1], kernel_initializer="he_normal")(x)
     x = tf.keras.layers.BatchNormalization()(x)
     
     # Second hidden layer with 2 neurons and sigmoid activation function
     x = Dense(units=2, activation='sigmoid', kernel_initializer="he_normal",name="hidden")(x) 
-    x = tf.keras.layers.BatchNormalization(,name="batch_normalize")(x)
+    x = tf.keras.layers.BatchNormalization(name="batch_normalize")(x)
     
     # Output layer with 1 neuron
     output = Dense(units=1,name="emm_ec",activation="relu")(x)
-    ann = Model(inputs = inputs, outputs = {"output" : output})
+    ann = Model(inputs = inputs, outputs = output)
 
     ann.compile(
         optimizer=tf.keras.optimizers.Adamax(learning_rate=0.001), 
