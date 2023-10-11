@@ -1,7 +1,7 @@
 #%%
 import pandas as pd
 
-df = pd.read_csv("C:/Delta/projects/ann_calsim_ec_estimator/Inputs/inputs.csv",
+df = pd.read_csv("f:/projects/ann_calsim_ec_estimator/Inputs/inputs.csv",
                  index_col=0,parse_dates=[1],header=0)
 print(df)
 
@@ -77,20 +77,24 @@ def df_by_variable(df):
 
 # %%
 df2 = df_by_variable(df)
-#dfndx = df2[:,pd.IndexSlice['date',:]]
+dfndx = df2.loc[:,('date',)]
+print(dfndx)
 selected = []
+request = pd.to_datetime("2013-11-15")
 
 varnames = feature_names()
 for varb in varnames:
     subdf = df2.loc[:, pd.IndexSlice[varb,:]].droplevel(level="var",axis=1)
-    #subdf = subdf.set_index(dfndx)
-    #print(subdf.loc[subdf['date']=='2015-09-28'])
-    sel = subdf.iloc[-1,:].transpose()
+    subdf["datetime"] = dfndx
+    subdf.set_index("datetime",inplace=True)
+    sel = subdf.loc[request,:].transpose()
     sel.name=varb
-    print(sel.shape)
     selected.append(sel)
+    print("Original: ",df.loc[df["date"]==request,"EC"])
 allselect = pd.concat(selected,axis=1)
-print(allselect)
-#print(allselect)
+print(allselect.transpose())
+allselect.transpose().to_csv("f:/projects/ann_calsim_ec_estimator/Inputs/selected.csv",
+         header=False,index=False,float_format="%.3f")
+
 
 # %%
